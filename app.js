@@ -1,0 +1,36 @@
+'use strict';
+const storageKey = 'flatfolio.flats.v1';
+const form = document.querySelector('#flat-form');
+const fields = { address: form.elements.address, size: form.elements.size, floor: form.elements.floor, price: form.elements.price };
+const money = value => new Intl.NumberFormat('en-PL', { style: 'currency', currency: 'PLN', maximumFractionDigits: 0 }).format(value);
+const number = value => new Intl.NumberFormat('en-PL', { maximumFractionDigits: 2 }).format(value);
+let flats = [];
+let editingId = null;
+let noticeTimeout;
+function notify(message) { const el = document.querySelector('#notification'); el.textContent = message; el.classList.add('visible'); clearTimeout(noticeTimeout); noticeTimeout = setTimeout(() => el.classList.remove('visible'), 4000); }
+function validFlat(flat) { return flat && typeof flat.id === 'string' && typeof flat.address === 'string' && flat.address.trim() && Number.isFinite(flat.size) && flat.size > 0 && Number.isFinite(flat.price) && flat.price > 0 && Number.isInteger(flat.floor); }
+try { const saved = JSON.parse(localStorage.getItem(storageKey) || '[]'); if (Array.isArray(saved)) flats = saved.filter(validFlat); } catch { notify('Your saved collection could not be read. Browser storage may be unavailable.'); }
+function persist(next) { try { localStorage.setItem(storageKey, JSON.stringify(next)); flats = next; return true; } catch { notify('Unable to save. Please allow browser storage or free up space.'); return false; } }
+function calculate() { const size = Number(fields.size.value), price = Number(fields.price.value); const el = document.querySelector('#calculated-price'); el.replaceChildren(document.createTextNode(size > 0 && price > 0 ? money(price / size) + ' ' : '— ')); const suffix = document.createElement('small'); suffix.textContent = '/ m²'; el.append(suffix); }
+fields.size.addEventListener('input', calculate); fields.price.addEventListener('input', calculate);
+function resetForm() { editingId = null; form.reset(); document.querySelector('#form-title').textContent = 'Add a flat'; document.querySelector('#save-button').textContent = '＋  Add to collection'; document.querySelector('#cancel-edit').hidden = true; calculate(); }
+document.querySelector('#cancel-edit').addEventListener('click', resetForm);
+form.addEventListener('submit', event => { event.preventDefault(); if (!form.reportValidity()) return; const flat = { id: editingId || crypto.randomUUID(), address: fields.address.value.trim(), size: Number(fields.size.value), price: Number(fields.price.value), floor: Number(fields.floor.value), created: Date.now() }; if (!validFlat(flat)) { fields.address.setCustomValidity('Please enter an address.'); fields.address.reportValidity(); return; } const wasEditing = Boolean(editingId); const previous = flats.find(item => item.id === editingId); if (previous) flat.created = previous.created; const next = wasEditing ? flats.map(item => item.id === editingId ? flat : item) : [...flats, flat]; if (persist(next)) { resetForm(); render(); notify(wasEditing ? 'Flat updated.' : 'Flat added to your collection.'); } });
+fields.address.addEventListener('input', () => fields.address.setCustomValidity(''));
+function textElement(tag, className, text) { const element = document.createElement(tag); if (className) element.className = className; element.textContent = text; return element; }
+function render() {
+ document.querySelector('#count').replaceChildren(document.createTextNode(flats.length + ' '), textElement('small', '', flats.length === 1 ? 'property' : 'properties'));
+ document.querySelector('#collection-count').textContent = flats.length;
+ document.querySelector('#average').textContent = flats.length ? money(flats.reduce((sum, flat) => sum + flat.price, 0) / flats.length) : '—';
+ document.querySelector('#average-metre').textContent = flats.length ? money(flats.reduce((sum, flat) => sum + flat.price / flat.size, 0) / flats.length) : '—';
+ const search = document.querySelector('#search').value.trim().toLocaleLowerCase();
+ const visible = flats.filter(flat => flat.address.toLocaleLowerCase().includes(search));
+ const sorting = document.querySelector('#sort').value;
+ visible.sort((a, b) => sorting === 'price-low' ? a.price - b.price : sorting === 'metre-low' ? a.price / a.size - b.price / b.size : sorting === 'size-high' ? b.size - a.size : b.created - a.created);
+ const container = document.querySelector('#flats'); container.replaceChildren();
+ if (!visible.length) { const empty = textElement('div', 'empty', ''); empty.append(textElement('div', 'empty-icon', '⌂'), textElement('h3', '', flats.length ? 'No flats found' : 'Your next chapter starts here'), textElement('p', '', flats.length ? 'Try a different address to find what you’re looking for.' : 'Add your first flat to start building a clearer picture of your possibilities.')); if (!flats.length) empty.append(textElement('div', 'hint', '← Start with the details on the left')); container.append(empty); return; }
+ for (const flat of visible) { const card = textElement('article', 'flat-card', ''); const top = textElement('div', 'card-top', ''); const address = textElement('div', '', ''); address.append(textElement('div', 'address', flat.address), textElement('p', 'card-caption', flat.floor === 0 ? 'Ground floor' : 'Floor ' + flat.floor)); const actions = textElement('div', 'card-actions', ''); const edit = textElement('button', '', 'Edit'); edit.type = 'button'; edit.setAttribute('aria-label', 'Edit ' + flat.address); edit.addEventListener('click', () => { editingId = flat.id; for (const key of Object.keys(fields)) fields[key].value = flat[key]; document.querySelector('#form-title').textContent = 'Edit flat'; document.querySelector('#save-button').textContent = 'Save changes'; document.querySelector('#cancel-edit').hidden = false; calculate(); fields.address.focus(); form.scrollIntoView({ behavior: 'smooth', block: 'center' }); }); const remove = textElement('button', '', 'Delete'); remove.type = 'button'; remove.setAttribute('aria-label', 'Delete ' + flat.address); remove.addEventListener('click', () => { if (confirm('Delete the flat at ' + flat.address + '?') && persist(flats.filter(item => item.id !== flat.id))) { if (editingId === flat.id) resetForm(); render(); notify('Flat deleted.'); } }); actions.append(edit, remove); top.append(address, actions); const values = textElement('div', 'card-values', ''); for (const [label, value] of [['SIZE', number(flat.size) + ' m²'], ['TOTAL PRICE', money(flat.price)], ['PRICE / M²', money(flat.price / flat.size)]]) { const cell = textElement('div', '', ''); cell.append(textElement('span', '', label), textElement('strong', '', value)); values.append(cell); } card.append(top, values); container.append(card); }
+}
+document.querySelector('#search').addEventListener('input', render); document.querySelector('#sort').addEventListener('change', render);
+window.addEventListener('storage', event => { if (event.key === storageKey || event.key === null) { try { const saved = JSON.parse(event.newValue || '[]'); if (Array.isArray(saved)) { flats = saved.filter(validFlat); resetForm(); render(); } } catch { notify('Unable to read the updated collection.'); } } });
+render();
